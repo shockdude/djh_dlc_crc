@@ -61,40 +61,6 @@ def main(args: List[str]) -> Optional[str]:
 
 # Public library function. offset is uint, and newcrc is uint32.
 # May raise IOError, ValueError, AssertionError.
-# def modify_file_crc32(path: str, offset: int, newcrc: int, printstatus: bool = False) -> None:
-	# with open(path, "r+b") as raf:
-		# raf.seek(0, os.SEEK_END)
-		# length: int = raf.tell()
-		# if offset + 4 > length:
-			# raise ValueError("Byte offset plus 4 exceeds file length")
-		
-		# # Read entire file and calculate original CRC-32 value
-		# crc: int = get_crc32(raf)
-		# if printstatus:
-			# print(f"Original CRC-32: {reverse32(crc):08X}")
-		
-		# # Compute the change to make
-		# delta: int = crc ^ newcrc
-		# delta = multiply_mod(reciprocal_mod(pow_mod(2, (length - offset) * 8)), delta)
-		
-		# # Patch 4 bytes in the file
-		# raf.seek(offset)
-		# bytes4: bytearray = bytearray(raf.read(4))
-		# if len(bytes4) != 4:
-			# raise IOError("Cannot read 4 bytes at offset")
-		# for i in range(4):
-			# bytes4[i] ^= (reverse32(delta) >> (i * 8)) & 0xFF
-		# raf.seek(offset)
-		# raf.write(bytes4)
-		# if printstatus:
-			# print("Computed and wrote patch")
-		
-		# # Recheck entire file
-		# if get_crc32(raf) != newcrc:
-			# raise AssertionError("Failed to update CRC-32 to desired value")
-		# elif printstatus:
-			# print("New CRC-32 successfully verified")
-			
 def modify_file_crc32(path: str, offset: int, newcrc: int, printstatus: bool = False) -> None:
 	with open(path, "r+b") as raf:
 		modify_io_crc32(raf, offset, newcrc, printstatus)

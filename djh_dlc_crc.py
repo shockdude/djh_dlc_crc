@@ -34,11 +34,65 @@ class Node():
 	HEADER_SIZE = 16
 	ZEROES = b"\x00\x00\x00\x00"
 
-	def __init__(self, input):
-		self.type = Node.Types.content
+	def __init__(self, input, type):
+		self.type = type
 		self.name = input
+		self.str_len = self.len_name_bin()
+		self.node_len = 0
+		self.crc = 0
+		self.body_offset = 0
+		self.body = b""
+		
+	def len_name_bin(self):
+		# length of string, plus null terminator
+		str_len = len(self.name) + 1
+		# round up to multiple of 4
+		while str_len % 4 != 0:
+			str_len += 1
+		return str_len
+
+	def get_binary(self):
+		return struct.pack(">IIII{}s".format(self.str_len), self.node_len, self.type.value, self.crc, self.body_offset, self.name.encode("utf-8")) + self.body
+			
+	def print_tree(self, prefix = ""):
+		print(prefix + self.name)
+	
+class FileRefNode(Node):
+	def __init__(self, input):
+		super().__init__(input, Node.Types.file_ref)
+		
+		self.node_len = Node.HEADER_SIZE + self.str_len
+		with open(self.name, "rb") as f:
+			self.crc = binascii.crc32(f.read())
+
+class EmbeddedFileNode(Node):
+	def __init__(self, input):
+		super().__init__(input, Node.Types.embedded)
+		
+		with open(self.name, "rb") as f:
+			self.body = f.read()
+		self.body_len = len(self.body)
+
+		# padding to align body to dword
+		body_padding = (4 - (self.body_len % 4)) % 4
+		for i in range(body_padding):
+			self.body += b"\x00"
+		self.body = struct.pack(">I", self.body_len) + self.body
+		self.crc = binascii.crc32(self.body)
+		self.body_offset = Node.HEADER_SIZE + self.str_len
+		self.node_len = self.body_offset + len(self.body)
+	
+class DirectoryNode(Node):
+	def __init__(self, input, get_children = False):
+		super().__init__(input, Node.Types.directory)
+		self.body_offset = Node.HEADER_SIZE + self.str_len
+		
 		# input is a working folder
 		self.child_nodes = self.get_child_nodes(input)
+		if get_children:
+			self.child_nodes = self.get_child_nodes(input)
+		else:
+			self.child_nodes = []
 		
 	def get_child_nodes(self, input):
 		os.chdir(input)
@@ -51,33 +105,45 @@ class Node():
 				else:
 					child_nodes.append(FileRefNode(f))
 			elif os.path.isdir(f):
-				child_nodes.append(DirectoryNode(f))
+				child_nodes.append(DirectoryNode(f, True))
 		os.chdir("..")
 		return child_nodes
 		
-	def len_name_bin(self):
-		# length of string, plus null terminator
-		str_len = len(self.name) + 1
-		# round up to multiple of 4
-		while str_len % 4 != 0:
-			str_len += 1
-		return str_len
+	def add_child_node(self, node):
+		self.child_nodes.append(node)
+
+	def get_binary(self):
+		self.body = b""
+		for c in self.child_nodes:
+			self.body += c.get_binary()
+		self.body += Node.ZEROES
+		
+		self.crc = binascii.crc32(self.body)
+		self.node_len = self.body_offset + len(self.body)
+		
+		return super().get_binary()
+		
+	def print_tree(self, prefix = ""):
+		super().print_tree(prefix)
+		for c in self.child_nodes:
+			c.print_tree(prefix + "  ")
+		
+class ContentNode(DirectoryNode):
+	def __init__(self, input, get_children = False):
+		super().__init__(input, get_children)
+		self.type = Node.Types.content
+		self.body_offset = Node.HEADER_SIZE + 4
 		
 	def get_binary(self):
-		# print(self.name)
-		body_offset = Node.HEADER_SIZE + 4
-		
-		body = b""
-		os.chdir(self.name)
+		self.body = b""
 		for c in self.child_nodes:
-			body += c.get_binary()
-		os.chdir("..")
-		body += Node.ZEROES
+			self.body += c.get_binary()
+		self.body += Node.ZEROES
 		
-		crc = binascii.crc32(body)
+		self.crc = binascii.crc32(self.body)
 		# additional 4 to length for reverse crc
-		node_len = body_offset + len(body) + 4
-		node_bytes = struct.pack(">IIIII", node_len, self.type.value, crc, body_offset, 0) + body + Node.ZEROES
+		self.node_len = self.body_offset + len(self.body) + 4
+		node_bytes = struct.pack(">IIIII", self.node_len, self.type.value, self.crc, self.body_offset, 0) + self.body + Node.ZEROES
 		
 		# compute reverse CRC
 		node_io = io.BytesIO(node_bytes)
@@ -86,81 +152,6 @@ class Node():
 		node_bytes = node_io.read()
 		
 		return Node.FSGP_HEADER + node_bytes + Node.ZEROES
-			
-	def print_tree(self, prefix = ""):
-		print(prefix + self.name)
-		for c in self.child_nodes:
-			c.print_tree(prefix + "  ")
-	
-class DirectoryNode(Node):
-	def __init__(self, input):
-		self.type = Node.Types.directory
-		self.name = input
-		# input is a working folder
-		self.child_nodes = self.get_child_nodes(input)
-		
-	def get_binary(self):
-		# print(self.name)
-		str_len = self.len_name_bin()
-		body_offset = Node.HEADER_SIZE + str_len
-		
-		body = b""
-		os.chdir(self.name)
-		for c in self.child_nodes:
-			body += c.get_binary()
-		os.chdir("..")
-		body += Node.ZEROES
-		
-		crc = binascii.crc32(body)
-		node_len = body_offset + len(body)
-		
-		return struct.pack(">IIII{}s".format(str_len), node_len, self.type.value, crc, body_offset, self.name.encode("utf-8")) + body
-	
-class EmbeddedFileNode(Node):
-	def __init__(self, input):
-		self.type = Node.Types.embedded
-		self.name = input
-		
-	def print_tree(self, prefix = ""):
-		print(prefix + self.name)
-		
-	def get_binary(self):
-		# print(self.name)
-		str_len = self.len_name_bin()
-		body_offset = Node.HEADER_SIZE + str_len
-		
-		with open(self.name, "rb") as f:
-			body = f.read()
-		body_len = len(body)
-		
-		# padding to align node to dword
-		body_padding = (4 - (body_len % 4)) % 4
-		for i in range(body_padding):
-			body += b"\x00"
-			
-		body = struct.pack(">I", body_len) + body
-		node_len = body_offset + len(body)
-		crc = binascii.crc32(body)
-		
-		return struct.pack(">IIII{}s".format(str_len), node_len, self.type.value, crc, body_offset, self.name.encode("utf-8")) + body
-	
-class FileRefNode(Node):
-	def __init__(self, input):
-		self.type = Node.Types.file_ref
-		self.name = input
-		
-	def get_binary(self):
-		# print(self.name)
-		str_len = self.len_name_bin()
-		node_len = Node.HEADER_SIZE + str_len
-		
-		with open(self.name, "rb") as f:
-			crc = binascii.crc32(f.read())
-		
-		return struct.pack(">IIII{}s".format(str_len), node_len, self.type.value, crc, 0, self.name.encode("utf-8"))
-		
-	def print_tree(self, prefix = ""):
-		print(prefix + self.name)
 
 def main():
 	parser = argparse.ArgumentParser(description="Convert the contents of a folder into a DJ Hero DLC CRC (FSGP) file")
@@ -168,10 +159,10 @@ def main():
 	
 	args = parser.parse_args()
 	
-	root = Node(args.input_folder)
+	root = ContentNode(args.input_folder, True)
 	# root.print_tree()
 	
-	with open("DLC-" + args.input_folder, "wb") as f:
+	with open("DLC-" + os.path.basename(args.input_folder), "wb") as f:
 		f.write(root.get_binary())
 	
 if __name__ == "__main__":
