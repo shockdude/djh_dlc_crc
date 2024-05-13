@@ -22,6 +22,7 @@ import argparse
 import binascii
 import io
 from enum import Enum
+import pathlib
 
 class Node():
 	class Types(Enum):
@@ -158,6 +159,8 @@ def main():
 	parser.add_argument("input_folder")
 	
 	args = parser.parse_args()
+	if not os.path.isdir(args.input_folder):
+		parser.error("input_folder is invalid")
 	
 	root = ContentNode(args.input_folder, True)
 	# root.print_tree()
